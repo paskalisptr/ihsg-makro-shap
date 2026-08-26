@@ -1,150 +1,72 @@
-# ============================================================
-# HARI 1 -- AKUISISI DATA
-# Analisis Faktor Makroekonomi Domestik-Global terhadap Return IHSG
-# ============================================================
-# CATATAN PENTING SEBELUM DIJALANKAN:
-# 1. Skrip ini HARUS dijalankan di Google Colab atau lingkungan dengan
-#    akses internet penuh -- tidak bisa dites di sandbox pembuatan draf ini
-#    karena domain finance data (Yahoo Finance, FRED) tidak diizinkan di sana.
-# 2. Daftarkan API key FRED gratis dulu di https://fred.stlouisfed.org/docs/api/api_key.html
-#    sebelum menjalankan bagian FRED.
-# 3. BI Rate dan INDONIA TIDAK bisa diambil otomatis -- unduh manual dari
-#    situs resmi Bank Indonesia (bi.go.id), lalu ikuti format loading di
-#    bagian akhir skrip ini.
-# ============================================================
-
+import os
+import sys
+from pathlib import Path
 import pandas as pd
-import numpy as np
 import yfinance as yf
 from fredapi import Fred
 
-pd.set_option("display.width", 120)
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from config import FRED_API_KEY
 
-OUTPUT_DIR = "data_raw"
-import os
-os.makedirs(OUTPUT_DIR, exist_ok=True)
+START, END = "2020-01-01", "2026-06-30"
+OUT = "data_raw"
+os.makedirs(OUT, exist_ok=True)
 
-START_DATE = "2021-01-01"
-END_DATE = "2026-08-31"
+# --- Yahoo Finance: 6 ticker sekali download ---
+tickers = {"^JKSE": "ihsg", "USDIDR=X": "usdidr", "^GSPC": "sp500",
+           "CL=F": "oil_wti", "DX-Y.NYB": "dxy", "^VIX": "vix"}
+yf_data = yf.download(list(tickers), start=START, end=END, auto_adjust=True)["Close"]
+yf_data = yf_data.rename(columns=tickers)
+for col in yf_data.columns:
+    yf_data[col].dropna().to_csv(f"{OUT}/{col}.csv")
 
-# ------------------------------------------------------------
-# 1. DATA DARI YAHOO FINANCE (6 variabel, semuanya genuinely harian)
-# ------------------------------------------------------------
-YF_TICKERS = {
-    "ihsg":   "^JKSE",      # Target: harga penutupan IHSG
-    "usdidr": "USDIDR=X",   # Domestik: kurs
-    "sp500":  "^GSPC",      # Global: indeks S&P 500
-    "oil_wti": "CL=F",      # Global: harga minyak WTI
-    "dxy":    "DX-Y.NYB",   # Global: Dollar Index
-    "vix":    "^VIX",       # Global: CBOE Volatility Index
-}
-
-def fetch_yahoo_series(ticker: str, name: str) -> pd.Series:
-    """Ambil data Close harian dari Yahoo Finance, kembalikan sebagai Series bernama `name`."""
-    df = yf.download(ticker, start=START_DATE, end=END_DATE, progress=False, auto_adjust=True)
-    if df.empty:
-        raise ValueError(f"Data kosong untuk ticker {ticker}. Cek koneksi atau validitas ticker.")
-    close = df["Close"]
-    if isinstance(close, pd.DataFrame):
-        close = close.iloc[:, 0]
-    close.name = name
-    return close
-
-yahoo_data = {}
-for name, ticker in YF_TICKERS.items():
-    print(f"Mengambil {name} ({ticker})...")
-    try:
-        yahoo_data[name] = fetch_yahoo_series(ticker, name)
-        yahoo_data[name].to_csv(f"{OUTPUT_DIR}/{name}.csv")
-        print(f"  -> {len(yahoo_data[name])} baris tersimpan.")
-    except Exception as e:
-        print(f"  -> GAGAL: {e}. Cek ticker '{ticker}' masih aktif di Yahoo Finance.")
-
-# ------------------------------------------------------------
-# 2. DATA DARI FRED (2 variabel)
-# ------------------------------------------------------------
-# GANTI dengan API key Anda sendiri, jangan commit key ini ke repo publik
-FRED_API_KEY = "ISI_API_KEY_ANDA_DI_SINI"
+# --- FRED: 2 series harian (DFF, bukan FEDFUNDS yang bulanan) ---
 fred = Fred(api_key=FRED_API_KEY)
+for series_id, name in {"DFF": "fed_funds_rate", "DGS10": "ust10y"}.items():
+    s = fred.get_series(series_id, observation_start=START, observation_end=END).rename(name)
+    s = s.ffill()  # isi gap hari libur finansial AS yang bukan weekend
+    s.to_csv(f"{OUT}/{name}.csv")
 
-FRED_SERIES = {
-    "fed_funds_rate": "FEDFUNDS",  # Domestik? bukan -- ini GLOBAL: suku bunga acuan The Fed
-    "ust10y":         "DGS10",     # Global: yield obligasi pemerintah AS 10 tahun
-}
+# --- Tanggal campuran (Excel kadang parse otomatis, kadang enggak) ---
+BULAN_ID = {"januari":1,"jan":1,"februari":2,"feb":2,"maret":3,"mar":3,"april":4,"apr":4,
+            "mei":5,"juni":6,"jun":6,"juli":7,"jul":7,"agustus":8,"agu":8,"agt":8,
+            "september":9,"sep":9,"oktober":10,"okt":10,"november":11,"nov":11,"desember":12,"des":12}
 
-fred_data = {}
-for name, series_id in FRED_SERIES.items():
-    print(f"Mengambil {name} ({series_id}) dari FRED...")
-    try:
-        s = fred.get_series(series_id, observation_start=START_DATE, observation_end=END_DATE)
-        s.name = name
-        fred_data[name] = s
-        s.to_csv(f"{OUTPUT_DIR}/{name}.csv")
-        print(f"  -> {len(s)} baris tersimpan.")
-    except Exception as e:
-        print(f"  -> GAGAL: {e}. Cek API key FRED sudah benar.")
+def parse_tanggal(series):
+    hasil = pd.to_datetime(series, format="mixed", dayfirst=True, errors="coerce")
+    for i in hasil[hasil.isna()].index:
+        d, b, y = str(series[i]).split()
+        hasil[i] = pd.Timestamp(int(y), BULAN_ID[b.lower()], int(d))
+    return hasil
 
-# Catatan: FEDFUNDS di FRED biasanya bulanan (rata-rata efektif bulanan),
-# bukan harian. Perlakukan sebagai step function seperti BI Rate --
-# forward-fill ke hari bursa, JANGAN interpolasi linear.
+def clean_cols(df):
+    df.columns = df.columns.str.replace("<br>", " ", regex=False).str.strip()
+    return df
 
-# ------------------------------------------------------------
-# 3. US ECONOMIC POLICY UNCERTAINTY INDEX (bulanan -- perlu lag publikasi)
-# ------------------------------------------------------------
-# EPU index TIDAK tersedia lewat API otomatis yang stabil. Unduh manual:
-#   https://www.policyuncertainty.com/us_monthly.html
-#   -> unduh file CSV/XLS "US_Policy_Uncertainty_Data.xlsx", simpan sebagai
-#      data_raw/epu_raw.csv dengan kolom minimal: Year, Month, News_Based_Policy_Uncert_Index
-#
-# PENTING: EPU index bulan M baru dipublikasikan sekitar awal bulan M+1.
-# Kode di bawah menerapkan lag publikasi 1 bulan secara eksplisit --
-# JANGAN gunakan nilai bulan M langsung di tanggal-tanggal bulan M
-# (itu look-ahead bias).
+assert parse_tanggal(pd.Series(["23-Jun-26", "29 Mei 2026"]))[1] == pd.Timestamp(2026, 5, 29)
 
-def load_epu_with_publication_lag(path: str = f"{OUTPUT_DIR}/epu_raw.csv") -> pd.Series:
-    """
-    Baca EPU mentah (Year, Month, index value), lalu geser tanggal berlaku
-    ke awal bulan berikutnya untuk mensimulasikan lag publikasi riil.
-    """
-    raw = pd.read_csv(path)
-    raw["period_end"] = pd.to_datetime(
-        raw["Year"].astype(str) + "-" + raw["Month"].astype(str) + "-01"
-    ) + pd.offsets.MonthEnd(0)
-    # Nilai baru valid dipakai mulai tanggal 5 bulan berikutnya (asumsi konservatif,
-    # sesuaikan jika Anda menemukan tanggal rilis resmi yang lebih presisi)
-    raw["valid_from"] = raw["period_end"] + pd.Timedelta(days=5)
-    epu_col = [c for c in raw.columns if "Policy_Uncert" in c or "epu" in c.lower()]
-    if not epu_col:
-        raise ValueError("Kolom EPU tidak ditemukan, cek nama kolom di file mentah.")
-    raw = raw.rename(columns={epu_col[0]: "epu"})
-    return raw.set_index("valid_from")["epu"].sort_index()
+# --- EPU harian ---
+epu_raw = clean_cols(pd.read_csv(f"{OUT}/epu_daily_raw.csv"))
+epu = pd.Series(epu_raw["daily_policy_index"].values,
+                 index=pd.to_datetime(epu_raw[["year", "month", "day"]]),
+                 name="epu").sort_index().loc[START:END]
+epu.to_csv(f"{OUT}/epu_daily.csv")
 
-try:
-    epu_series = load_epu_with_publication_lag()
-    print(f"EPU dimuat: {len(epu_series)} baris (sebelum forward-fill ke harian).")
-except FileNotFoundError:
-    print("epu_raw.csv belum diunduh -- lengkapi manual dari policyuncertainty.com sebelum Hari 2.")
+# --- BI Rate ---
+bi = clean_cols(pd.read_csv(f"{OUT}/bi_rate_raw.csv", sep=";"))
+bi["Tanggal"] = parse_tanggal(bi["Tanggal"])
+bi_rate = bi.dropna(subset=["Tanggal"]).assign(
+    bi_rate=lambda d: d["BI-7Day-RR"].astype(str).str.replace("%", "").str.strip().astype(float)
+).set_index("Tanggal")["bi_rate"].sort_index().loc[START:END]
+bi_rate.to_csv(f"{OUT}/bi_rate.csv")
 
-# ------------------------------------------------------------
-# 4. BI RATE DAN INDONIA (manual, dari situs resmi Bank Indonesia)
-# ------------------------------------------------------------
-# Unduh manual dari:
-#   BI Rate  : https://www.bi.go.id/id/statistik/indikator/bi-rate.aspx
-#   INDONIA  : https://www.bi.go.id/id/statistik/informasi-kurs/indonia/Default.aspx
-# Simpan masing-masing sebagai data_raw/bi_rate_raw.csv dan data_raw/indonia_raw.csv
-# dengan minimal dua kolom: tanggal, nilai.
-#
-# Template loading (sesuaikan nama kolom persis setelah Anda unduh filenya):
-#
-# bi_rate = pd.read_csv(f"{OUTPUT_DIR}/bi_rate_raw.csv", parse_dates=["tanggal"])
-# bi_rate = bi_rate.set_index("tanggal")["nilai"].rename("bi_rate").sort_index()
-#
-# indonia = pd.read_csv(f"{OUTPUT_DIR}/indonia_raw.csv", parse_dates=["tanggal"])
-# indonia = indonia.set_index("tanggal")["nilai"].rename("indonia").sort_index()
+# --- INDONIA ---
+ind = clean_cols(pd.read_csv(f"{OUT}/indonia_raw.csv", sep=";"))
+ind["Tanggal Publikasi"] = parse_tanggal(ind["Tanggal Publikasi"])
+indonia = ind.dropna(subset=["Tanggal Publikasi"]).assign(
+    indonia=lambda d: d["IndONIA (%)"].astype(str).str.replace(",", ".").astype(float)
+).set_index("Tanggal Publikasi")["indonia"].sort_index().loc[START:END]
+indonia.to_csv(f"{OUT}/indonia.csv")
 
-print("\n=== RINGKASAN ===")
-print("Otomatis (Yahoo Finance):", list(yahoo_data.keys()))
-print("Otomatis (FRED):", list(fred_data.keys()))
-print("Perlu unduh manual: epu_raw.csv, bi_rate_raw.csv, indonia_raw.csv")
-print("Semua file mentah tersimpan di folder:", OUTPUT_DIR)
-print("\nLanjutkan ke Hari 2 (penggabungan data) setelah 3 file manual di atas lengkap.")
+print({"ihsg": len(yf_data["ihsg"].dropna()), "epu": len(epu),
+       "bi_rate": len(bi_rate), "indonia": len(indonia)})
