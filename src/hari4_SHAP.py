@@ -155,3 +155,38 @@ for fs_name, cols in feature_sets.items():
 ablation_df = pd.DataFrame(ablation_rows)
 print("\nHasil ablation:\n", ablation_df)
 ablation_df.to_csv("outputs/tables/ablation_study.csv", index=False)
+
+# ============================================================
+# Uji Binomial: apakah directional accuracy signifikan beda dari 50%
+# (tebak acak)? Ini WAJIB dilaporkan berdampingan dengan angka akurasi
+# mentah -- akurasi 57% tanpa uji ini cuma angka deskriptif, belum
+# terbukti bermakna secara statistik.
+# H0: proporsi tebakan benar = 0.5 (model tidak lebih baik dari koin)
+# Alternative "greater" karena kita cuma tertarik apakah model LEBIH
+# baik dari acak, bukan apakah dia beda dua arah.
+# ============================================================
+from scipy.stats import binomtest
+
+pred_xgb_full = fitted["xgb"].predict(X_test)
+pred_rf_full = fitted["rf"].predict(X_test)
+pred_lr_full = fitted["lr"].predict(X_test)
+
+binom_cases = [
+    ("XGBoost keseluruhan", np.sign(pred_xgb_full) == np.sign(y_test.values)),
+    ("XGBoost vol tinggi", (np.sign(pred_xgb_full) == np.sign(y_test.values))[mask_high_vol]),
+    ("XGBoost vol rendah", (np.sign(pred_xgb_full) == np.sign(y_test.values))[~mask_high_vol]),
+    ("Random Forest keseluruhan", np.sign(pred_rf_full) == np.sign(y_test.values)),
+    ("Linear Regression keseluruhan", np.sign(pred_lr_full) == np.sign(y_test.values)),
+]
+
+binom_rows = []
+print("\n=== Uji Binomial: akurasi arah vs tebak acak (50%) ===")
+for name, correct in binom_cases:
+    k, n = int(correct.sum()), len(correct)
+    res = binomtest(k, n, 0.5, alternative="greater")
+    status = "SIGNIFIKAN" if res.pvalue < 0.05 else "tidak signifikan"
+    print(f"{name:32s} k={k:3d}/{n:3d}  akurasi={k/n:.4f}  p={res.pvalue:.4f}  {status}")
+    binom_rows.append({"segmen": name, "k": k, "n": n, "akurasi": k / n, "p_value": res.pvalue, "status": status})
+
+binom_df = pd.DataFrame(binom_rows)
+binom_df.to_csv("outputs/tables/uji_binomial_directional_accuracy.csv", index=False)
