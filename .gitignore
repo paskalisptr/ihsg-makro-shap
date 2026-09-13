@@ -1,26 +1,12 @@
-# Kredensial -- JANGAN pernah commit API key asli
+# Kredensial -- SATU-SATUNYA pengecualian, jangan di-commit meski repo mau "semua file ada"
 config.py
-.env
 
-# Cache Python
+# Python
 __pycache__/
 *.pyc
-*.pyo
-
-# Jupyter
 .ipynb_checkpoints/
-
-# Virtual environment (kalau pakai VS Code lokal)
 venv/
-env/
 .venv/
 
-# OS junk
+# OS
 .DS_Store
-Thumbs.db
-
-# Catatan: data_raw/ dan data_processed/ SENGAJA TIDAK di-gitignore.
-# Dataset kita kecil (~1.400 baris x 10 variabel), jadi menyimpan data
-# mentah di repo justru memperkuat reproducibility (BAB 3.1.3) --
-# siapa pun yang clone repo ini bisa langsung reproduksi tanpa
-# perlu unduh ulang dari sumber yang mungkin berubah sewaktu-waktu.

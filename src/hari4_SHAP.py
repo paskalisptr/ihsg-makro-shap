@@ -103,7 +103,7 @@ plt.close()
 #     volatilitas tinggi vs rendah pada data uji. Independent samples,
 #     non-parametrik (SHAP tidak dijamin normal).
 # ============================================================
-vol20 = df["return_ihsg"].rolling(20).std()
+vol20 = df["return_ihsg"].rolling(20).std().shift(1)
 vol_test = vol20.reindex(y_test.index)
 mask_high_vol = (vol_test > vol_test.median()).values
 
