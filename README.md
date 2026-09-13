@@ -21,16 +21,65 @@ Skripsi & paper (target JAIC, SINTA 3) yang menguji pengaruh relatif faktor makr
 
 ## Arsitektur & Pipeline
 
-![Pipeline penelitian](diagram1_pipeline.png)
-
 Lima tahap: (1) akuisisi 10 variabel makro dari 4 sumber, (2) pra-pemrosesan (gabung, lag 1 hari, differencing, uji ADF, split walk-forward), (3) empat jalur pemodelan paralel, (4) interpretasi & uji statistik lanjutan.
 
-## Arsitektur Model Utama
+## Eksplorasi Data (EDA)
 
-![Arsitektur XGBoost dan ARIMAX](diagram2_arsitektur_model.png)
+| | |
+|---|---|
+| ![Return & volatilitas](outputs/figures/eda_return_dan_volatilitas.png) | ![Korelasi antar fitur](outputs/figures/eda_correlation_heatmap.png) |
+| Return harian & volatilitas bergulir 20-hari, dua episode volatilitas tinggi ditandai (ilustratif) | Heatmap korelasi 10 variabel makro — semua VIF 1,0–1,2, tidak ada multikolinearitas |
 
-- **XGBoost**: gradient boosting sekuensial, tiap pohon memperbaiki residual pohon sebelumnya. Hyperparameter hasil tuning (`RandomizedSearchCV` + `TimeSeriesSplit` 5-fold): `learning_rate=0.07`, `max_depth=2`, `n_estimators=434`.
-- **ARIMAX**: kombinasi linear komponen AR(p), I(d), MA(q), dan variabel eksogen. Orde terpilih via AIC dengan pengecekan konvergensi eksplisit: **ARIMAX(0,0,1)**, `d=0` karena `return_ihsg` sudah terbukti stasioner (uji ADF).
+![Histogram return](outputs/figures/eda_return_histogram.png)
+
+Distribusi return harian IHSG — fat-tailed, konsisten dengan penolakan normalitas (Jarque-Bera p=0,0000).
+
+## Performa Model
+
+![Rolling directional accuracy XGBoost](outputs/figures/rolling_directional_accuracy_xgb.png)
+
+Akurasi arah bergulir 20-hari — melonjak di awal setiap episode volatilitas tinggi, menurun di puncaknya.
+
+| | |
+|---|---|
+| ![Aktual vs prediksi (penuh)](outputs/figures/prediksi_vs_aktual_full.png) | ![Aktual vs prediksi (zoom krisis)](outputs/figures/prediksi_vs_aktual_zoom_krisis.png) |
+
+## Interpretasi SHAP (model regresi)
+
+| | | |
+|---|---|---|
+| ![SHAP LR](outputs/figures/shap_importance_lr.png) | ![SHAP RF](outputs/figures/shap_importance_rf.png) | ![SHAP XGB](outputs/figures/shap_importance_xgb.png) |
+
+![SHAP summary XGBoost](outputs/figures/shap_summary_xgb.png)
+
+SHAP summary plot (arah pengaruh) — S&P 500 tinggi → SHAP positif; DXY tinggi → SHAP negatif, konsisten di seluruh model.
+
+![Rolling dominansi domestik vs global](outputs/figures/shap_rolling_domestik_vs_global.png)
+
+Dominansi global konsisten 15–20× lebih tinggi dari domestik sepanjang periode uji (model regresi).
+
+## Interpretasi SHAP (model klasifikasi)
+
+| | | |
+|---|---|---|
+| ![SHAP LogReg klasifikasi](outputs/figures/shap_klasifikasi_importance_logreg.png) | ![SHAP RF klasifikasi](outputs/figures/shap_klasifikasi_importance_rf.png) | ![SHAP XGB klasifikasi](outputs/figures/shap_klasifikasi_importance_xgb.png) |
+
+![Rolling dominansi klasifikasi](outputs/figures/shap_klasifikasi_rolling_domglobal.png)
+
+Pada model klasifikasi, dominansi global-domestik **bergeser signifikan** antar rezim volatilitas (Mann-Whitney U p=0,023) — berbeda dari model regresi (p=0,704).
+
+## ARIMAX & LSTM
+
+| | |
+|---|---|
+| ![Aktual vs prediksi ARIMAX](outputs/figures/arimax_aktual_vs_prediksi.png) | ![Koefisien ARIMAX](outputs/figures/arimax_koefisien.png) |
+| ![Training curve LSTM](outputs/figures/lstm_training_curve.png) | ![Probabilitas prediksi LSTM](outputs/figures/lstm_proba_vs_aktual.png) |
+
+Kurva `val_loss` LSTM naik setelah epoch ke-5 (early stopping di epoch 15) — bukti visual overfitting pada data latih yang kecil (808 sequence).
+
+## Perbandingan Seluruh Model
+
+![Perbandingan semua model](outputs/figures/perbandingan_semua_model.png)
 
 ---
 
